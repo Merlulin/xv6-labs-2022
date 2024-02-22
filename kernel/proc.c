@@ -8,7 +8,7 @@
 
 struct cpu cpus[NCPU];
 
-struct proc proc[NPROC];
+struct proc proc[NPROC];  // 进程列表
 
 struct proc *initproc;
 
@@ -145,6 +145,8 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  p->syscall_trace = 0;  // 初始化追踪系统调用掩码为0
 
   return p;
 }
@@ -309,6 +311,8 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  np->syscall_trace = p->syscall_trace;  // 子进程继承父进程的追踪系统调用掩码
 
   pid = np->pid;
 
@@ -680,4 +684,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// 统计进程中状态不等于UNUSED的进程数
+uint64
+count_process(void)
+{
+  uint64 cnt = 0;
+  for (struct proc *p = proc; p < &proc[NPROC]; p ++) {
+    if (p->state != UNUSED) {
+      cnt ++;
+    }
+  }
+  return cnt;
 }

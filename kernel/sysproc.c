@@ -5,6 +5,8 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "syscall.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -90,4 +92,38 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+
+// 追踪目标系统调用
+uint64
+sys_trace(void)
+{
+  int mask;
+  
+  // 内核态无法直接获取用户态的参数，需要用argint等方法通过寄存器获取参数。
+  if (argint(0, &mask), mask < 0) {
+    return -1;
+  }
+
+  // myproc返回当前进程的proc结构体 
+  myproc()->syscall_trace = mask;
+  return 0;
+}
+
+// 打印系统信息
+uint64
+sys_sysinfo(void)
+{
+  // 从用户态读取一个指针，作为sysinfo的结构的缓冲区
+  uint64 addr;
+  argaddr(0, &addr);
+
+  struct sysinfo sinfo;
+  sinfo.freemem = count_free_mem();
+  sinfo.nproc = count_process();
+
+  if (copyout(myproc()->pagetable, addr, (char *)&sinfo, sizeof(sinfo)))
+    return -1;
+  return 0;
 }

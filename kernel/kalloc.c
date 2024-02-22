@@ -18,9 +18,10 @@ struct run {
   struct run *next;
 };
 
+// 系统内存结构
 struct {
   struct spinlock lock;
-  struct run *freelist;
+  struct run *freelist;   // 空闲链表
 } kmem;
 
 void
@@ -78,5 +79,26 @@ kalloc(void)
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
-  return (void*)r;
+  return (void*)r;  // 把空闲链表的根节点返回出去，作为内存页使用
+}
+
+// count all free memory in system.
+uint64
+count_free_mem(void)
+{
+  // 获取系统信息资源必须先锁内存管理，防止竞争（在后面的课程出现）
+  acquire(&kmem.lock);
+
+  // 统计空闲页数 * 页的大小就是空闲的内存字节数目
+  uint64 mem_bytes = 0;
+  // x86使用空闲链表法分配内存
+  struct run *r = kmem.freelist;
+  while (r) {
+    mem_bytes += PGSIZE;
+    r = r->next;
+  }
+
+  // 获取完释放锁
+  release(&kmem.lock);
+  return mem_bytes;
 }
