@@ -101,8 +101,9 @@ sys_trace(void)
 {
   int mask;
   
+  argint(0, &mask);
   // 内核态无法直接获取用户态的参数，需要用argint等方法通过寄存器获取参数。
-  if (argint(0, &mask), mask < 0) {
+  if (mask < 0) {
     return -1;
   }
 
