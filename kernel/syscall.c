@@ -142,17 +142,21 @@ static uint64 (*syscalls[])(void) = {
 };
 
 
-
+/**
+ * 根据系统调用的编号，查找对应的系统调用函数
+*/
 void
 syscall(void)
 {
   int num;
   struct proc *p = myproc();
 
+  // 因为系统调用函数的映射数字都会存放在a7 reg当中，所以num就表示了系统调用的编号
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
+    // 习惯于将系统调用的返回值存放在a0 reg中
     p->trapframe->a0 = syscalls[num]();
   } else {
     printf("%d %s: unknown sys call %d\n",

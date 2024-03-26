@@ -40,16 +40,17 @@ extern struct cpu cpus[NCPU];
 // the trapframe includes callee-saved user registers like s0-s11 because the
 // return-to-user path via usertrapret() doesn't return through
 // the entire kernel call stack.
+// 表述了trapframe page中都存放了什么东西
 struct trapframe {
-  /*   0 */ uint64 kernel_satp;   // kernel page table
-  /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
+  /*   0 */ uint64 kernel_satp;   // kernel page table, which trap process will take into SATP reg
+  /*   8 */ uint64 kernel_sp;     // top of process's kernel stack, Stack Pointer
   /*  16 */ uint64 kernel_trap;   // usertrap()
   /*  24 */ uint64 epc;           // saved user program counter
   /*  32 */ uint64 kernel_hartid; // saved kernel tp
   /*  40 */ uint64 ra;
   /*  48 */ uint64 sp;
   /*  56 */ uint64 gp;
-  /*  64 */ uint64 tp;
+  /*  64 */ uint64 tp; // tp reg usually use to store cpu kernel id to identify which kernel used for this process
   /*  72 */ uint64 t0;
   /*  80 */ uint64 t1;
   /*  88 */ uint64 t2;
@@ -104,4 +105,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct usyscall *usyscall;
 };

@@ -16,11 +16,13 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
+// 为内核创建一个直接映射的页表
 pagetable_t
 kvmmake(void)
 {
-  pagetable_t kpgtbl;
+  pagetable_t kpgtbl;  // pagetable_t 是一个指向RISC-V的首个页表项的指针变量
 
+  // 首先分配一页物理内存来保存根页表
   kpgtbl = (pagetable_t) kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
@@ -50,6 +52,7 @@ kvmmake(void)
 }
 
 // Initialize the one kernel_pagetable
+// 在boot启动时，main会调用init通过kvmmake来创建内核页表
 void
 kvminit(void)
 {
@@ -82,6 +85,7 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+// walk 函数是关键函数，用于虚拟地址找到对应的页表项，并进行新的映射链接, 返回指向对应页表项的指针
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -89,7 +93,9 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     panic("walk");
 
   for(int level = 2; level > 0; level--) {
+    // PX宏用于快速查找在level等级下的va虚拟地址对应的页表项
     pte_t *pte = &pagetable[PX(level, va)];
+    // 如果这个页表项是有效的，则将页表项转变成物理地址，走到下一级页表
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
@@ -139,6 +145,8 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
+// 为虚拟地址创建一个页表项
+// va 表示虚拟地址的起始位置，pa 表示物理地址的起始位置
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
@@ -147,19 +155,26 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 
   if(size == 0)
     panic("mappages: size");
-  
+
+  // PGROUNDDOWN 实际就是把虚拟地址的后12为全部变成0
+  // a 表示新映射的起始地址，last 为最后一个要映射的页帧
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
+    // 遍历给定的页表是否有a页表项
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
+    // 检查新创建的页表项的有效性
     if(*pte & PTE_V)
       panic("mappages: remap");
+    // 将物理地址pa转换成页表项格式
     *pte = PA2PTE(pa) | perm | PTE_V;
+    // 检查当前页表项是否走到了最后一个需要映射的页表项，如果是则退出循环
     if(a == last)
       break;
     a += PGSIZE;
     pa += PGSIZE;
+    // 每次分配一个新的页
   }
   return 0;
 }
@@ -167,6 +182,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
+// 安全地取消一系列虚拟地址的映射,并根据需要释放对应的物理内存
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -435,5 +451,26 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+/**
+ * 打印页表的内容
+ * 传入参数页表
+ * */ 
+void vmprint(pagetable_t pagetable, uint64 depth) {
+  if (depth == 0) 
+    printf("page table %p\n", pagetable);
+  for (int i = 0; i < 512; i ++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V)) {
+      uint64 child = PTE2PA(pte);
+      for (int j = 0; j <= depth; j ++) {
+        printf(" ..");
+      } 
+      printf("%d: pte %p pa %p\n", i, pte, child);
+      if (depth < 2) 
+        vmprint((pagetable_t)child, depth + 1);
+    }
   }
 }

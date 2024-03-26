@@ -75,6 +75,36 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  pagetable_t pagetable = myproc()->pagetable;
+  uint64 fir_addr, mask_addr;
+  int pg_size;
+  uint64 mask = 0;
+  if (argaddr(0, &fir_addr), fir_addr == -1) {
+    return -1;
+  } 
+  if (argint(1, &pg_size), pg_size == -1) {
+    return -1;
+  }
+  if (argaddr(2, &mask_addr), mask_addr == -1) {
+    return -1;
+  }
+  // 设置可以一次访问的页数为32
+  if (pg_size > 32) {
+    return -1;
+  }
+
+  pte_t* pte = walk(pagetable, fir_addr, 0);
+
+  for (int i = 0; i < pg_size; i++) {
+    if ((pte[i] & PTE_A) && (pte[i] & PTE_V)) {
+      mask |= (1 << i);
+      pte[i] ^= PTE_A; // 确定过了就复位，重新标记回没访问过
+    }
+  }
+
+  if (copyout(pagetable, mask_addr, (char*) &mask, sizeof(uint))) {
+    return -1;
+  }
   return 0;
 }
 #endif

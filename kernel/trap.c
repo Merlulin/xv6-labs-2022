@@ -43,25 +43,33 @@ usertrap(void)
 
   // send interrupts and exceptions to kerneltrap(),
   // since we're now in the kernel.
+  // 更改STCVEC寄存器, 将其指向kernelvec变量，这是内核空间trap处理代码的位置，而不是用户空间trap处理代码的位置
   w_stvec((uint64)kernelvec);
 
+  // using myproc() to recognize which procress is running
+  // myproc函数实际上会查找一个根据当前CPU核的编号索引的数组，CPU核的编号是hartid，
+  // 如果你还记得，我们之前在uservec函数中将它存在了tp寄存器。这是myproc函数找出当前运行进程的方法。
   struct proc *p = myproc();
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
+  // scause reg store why we call into usertrap, for instance number 8 express that we get into this function because system call
   if(r_scause() == 8){
     // system call
 
+    // check whether another process killed this process
     if(killed(p))
       exit(-1);
 
     // sepc points to the ecall instruction,
     // but we want to return to the next instruction.
+    // += 4 可以保证trap退出时会从ecall下一条指令恢复，而不是重新执行ecall指令
     p->trapframe->epc += 4;
 
     // an interrupt will change sepc, scause, and sstatus,
     // so enable only now that we're done with those registers.
+    // 显式的打开运行终端，系统调用可能很久，也是可以被更高优先的操作中断
     intr_on();
 
     syscall();
@@ -80,11 +88,13 @@ usertrap(void)
   if(which_dev == 2)
     yield();
 
+  // 只有进程没有被kill才会恢复现场，我们不希望恢复一个被killed的进程
   usertrapret();
 }
 
 //
 // return to user space
+// 恢复现场
 //
 void
 usertrapret(void)
@@ -94,9 +104,12 @@ usertrapret(void)
   // we're about to switch the destination of traps from
   // kerneltrap() to usertrap(), so turn off interrupts until
   // we're back in user space, where usertrap() is correct.
+  // 恢复现场前需要关中断
   intr_off();
 
   // send syscalls, interrupts, and exceptions to uservec in trampoline.S
+  // 设置了STVEC寄存器指向trampoline代码，在那里最终会执行sret指令返回到用户空间
+  // 位于trampoline代码最后的sret指令会重新打开中断
   uint64 trampoline_uservec = TRAMPOLINE + (uservec - trampoline);
   w_stvec(trampoline_uservec);
 
@@ -104,7 +117,7 @@ usertrapret(void)
   // the process next traps into the kernel.
   p->trapframe->kernel_satp = r_satp();         // kernel page table
   p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
-  p->trapframe->kernel_trap = (uint64)usertrap;
+  p->trapframe->kernel_trap = (uint64)usertrap; // 存储了usertrap函数的指针
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
   // set up the registers that trampoline.S's sret will use
@@ -112,8 +125,8 @@ usertrapret(void)
   
   // set S Previous Privilege mode to User.
   unsigned long x = r_sstatus();
-  x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
-  x |= SSTATUS_SPIE; // enable interrupts in user mode
+  x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode， SPP bit位控制了sret指令的行为，该bit为0表示下次执行sret的时候，我们想要返回user mode而不是supervisor mode
+  x |= SSTATUS_SPIE; // enable interrupts in user mode， SPIE bit位控制了，在执行完sret之后，是否打开中断
   w_sstatus(x);
 
   // set S Exception Program Counter to the saved user pc.
