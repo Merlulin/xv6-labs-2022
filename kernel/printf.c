@@ -133,3 +133,23 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+void 
+backtrace(void)
+{
+  printf("in bt\n");
+  // 获取当前帧指针, r_fp的返回值虽然是uint64，但是由于返回值是帧指针，是一个内存地址，
+  // 所以本质是一个指针的感觉，所以可以强制转换成一个同样大小的指针类型，这样可以更方便的用指针的方式操作内存数据
+  uint64* cur_frame = (uint64*)r_fp();
+  // 获取当前函数调用的所在的帧页面的上下界, 需要注意top更大，因为栈顶在下
+  uint64* top = (uint64*)PGROUNDUP((uint64)cur_frame);
+  uint64* bottom = (uint64*)PGROUNDDOWN((uint64)cur_frame);
+  while(cur_frame < top && cur_frame > bottom) {
+    // 打印被调用者的地址，返回地址在fd的-8个字节处，而且cur_frame大小是64，所以-1就是减去了8个字节
+    printf("%p\n", *(cur_frame - 1));
+    // 将cur_frame指向被调用者的fd
+    cur_frame = (uint64*)*(cur_frame - 2);
+  }
+
+}

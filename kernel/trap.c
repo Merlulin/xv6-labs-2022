@@ -77,8 +77,22 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  // 时钟中断
+  if(which_dev == 2) {
+    if (p->alarm_tks > 0) {
+      p->alarm_tk_elapsed ++; // 距离上次间隔+1
+      // 如果间隔抄出了重复警告的时间则警告
+      if (p->alarm_tk_elapsed > p->alarm_tks && p->alarm_state == 0) {
+        // 指向警告函数前先备份一下当前的环境
+        *p->alarmframe = *p->trapframe;
+        p->alarm_tk_elapsed = 0; // 复原
+        // 并将pc指向警告函数的起始地址
+        p->trapframe->epc = (uint64)p->alarm_handler;
+        p->alarm_state = 1;
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }

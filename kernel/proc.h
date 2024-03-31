@@ -104,4 +104,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  uint64 alarm_tks; // 记录用于执行handler的间隔，0表示不执行
+  void (*alarm_handler)(); // handler的地址
+  uint64 alarm_tk_elapsed; // 距离上次执行handler的时间间隔
+
+  struct trapframe *alarmframe; // 用于保存调用警告前的栈帧环境
+  uint alarm_state; // 用于表示当前警告是否结束，避免重复进入导致循环不结束
 };
