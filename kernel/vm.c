@@ -302,32 +302,76 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+// int
+// uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+// {
+//   pte_t *pte; // pte指针用于存储找到的页表项
+//   uint64 pa, i; // pa用于存储物理页，i作为循环计数器，遍历虚拟地址空间
+//   uint flags; // flags用来存储页表项中的标志位
+//   char *mem;  // 用于指向新分配的物理内存的指针
+
+//   // for循环，分配所需大小的页面
+//   for(i = 0; i < sz; i += PGSIZE){
+//     // walk函数寻找old页表中是否已经存在虚拟地址为i的页表项，等于0则说明不存在，说明原页表中就没有该页，需要报错
+//     if((pte = walk(old, i, 0)) == 0)
+//       panic("uvmcopy: pte should exist");
+//     // 检查查找到的页表项是否有效
+//     if((*pte & PTE_V) == 0)
+//       panic("uvmcopy: page not present");
+//     // 将页表项转换成物理地址
+//     pa = PTE2PA(*pte);
+//     // 从页表项中获取页标志位
+//     flags = PTE_FLAGS(*pte);
+//     // 使用kalloc分配一个新页，给这个页表项，分配失败则前往err
+//     if((mem = kalloc()) == 0)
+//       goto err;
+//     // memmove将旧的页面内容赋值到新页当中
+//     memmove(mem, (char*)pa, PGSIZE);
+//     // 将新分配的内存映射到目标页表
+//     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+//       kfree(mem);
+//       goto err;
+//     }
+//   }
+//   return 0;
+
+//  err:
+//   // 如果失败则接触映射并释放已经分配的资源
+//   uvmunmap(new, 0, i / PGSIZE, 1);
+//   return -1;
+// }
+
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
-  pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
+  pte_t *pte; // pte指针用于存储找到的页表项
+  uint64 pa, i; // pa用于存储物理页，i作为循环计数器，遍历虚拟地址空间
+  uint flags; // flags用来存储页表项中的标志位
 
+  // for循环，分配所需大小的页面
   for(i = 0; i < sz; i += PGSIZE){
+    // walk函数寻找old页表中是否已经存在虚拟地址为i的页表项，等于0则说明不存在，说明原页表中就没有该页，需要报错
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
+    // 检查查找到的页表项是否有效
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+    // 将原页表项的可读权限清除
+    *pte &= ~PTE_W;
+    // 将页表项转换成物理地址
     pa = PTE2PA(*pte);
+    // 从页表项中获取页标志位
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // 将旧的物理页映射到新的页表当中，而不是直接分配一个新的物理块，实现cow
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      printf("uvmcopy failed\n");
       goto err;
     }
   }
   return 0;
 
  err:
+  // 如果失败则接触映射并释放已经分配的资源
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
@@ -436,4 +480,11 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// 给cow页分配物理页
+int
+cowcopy(pagetable_t old, pagetable_t new, uint64 sz) {
+  
+  return 0;
 }
