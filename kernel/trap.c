@@ -33,58 +33,6 @@ trapinithart(void)
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
 //
-// void
-// usertrap(void)
-// {
-//   int which_dev = 0;
-
-//   // spp状态寄存器存放了当前trap前的指令是位于什么态下，r_sstatus是一个内敛汇编，读取状态存入ssp寄存器中
-//   if((r_sstatus() & SSTATUS_SPP) != 0)
-//     panic("usertrap: not from user mode");
-
-//   // send interrupts and exceptions to kerneltrap(),
-//   // since we're now in the kernel.
-//   // 将中断向量寄存器指向kernelvec指定的中断处理程序地址
-//   w_stvec((uint64)kernelvec);
-
-//   struct proc *p = myproc();
-  
-//   // save user program counter.
-//   p->trapframe->epc = r_sepc();
-  
-//   if(r_scause() == 8){
-//     // system call
-
-//     if(killed(p))
-//       exit(-1);
-
-//     // sepc points to the ecall instruction,
-//     // but we want to return to the next instruction.
-//     p->trapframe->epc += 4;
-
-//     // an interrupt will change sepc, scause, and sstatus,
-//     // so enable only now that we're done with those registers.
-//     intr_on();
-
-//     syscall();
-//   } else if((which_dev = devintr()) != 0){
-//     // ok
-//   } else {
-//     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-//     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-//     setkilled(p);
-//   }
-
-//   if(killed(p))
-//     exit(-1);
-
-//   // give up the CPU if this is a timer interrupt.
-//   if(which_dev == 2)
-//     yield();
-
-//   usertrapret();
-// }
-
 void
 usertrap(void)
 {
@@ -119,19 +67,16 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if(r_scause() == 13 || r_scause() == 15) {
-    // 如果中断源于缺页异常则通常是因为COW page，所以需要分配一个新的页面
-    if (cowcopy() == 0) {
-      printf("usertrap(): unexpected scause %p pid=%d\n, and cowcopy wrong!", r_scause(), p->pid);
-      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-      setkilled(p);  
-    }
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 15 && uncopied_cow(p->pagetable, r_stval())){ 
+    if(cowalloc(p->pagetable, r_stval()) < 0){
+      p->killed = 1;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p);
+    p->killed = 1;
   }
 
   if(killed(p))

@@ -302,76 +302,39 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
-// int
-// uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
-// {
-//   pte_t *pte; // pte指针用于存储找到的页表项
-//   uint64 pa, i; // pa用于存储物理页，i作为循环计数器，遍历虚拟地址空间
-//   uint flags; // flags用来存储页表项中的标志位
-//   char *mem;  // 用于指向新分配的物理内存的指针
-
-//   // for循环，分配所需大小的页面
-//   for(i = 0; i < sz; i += PGSIZE){
-//     // walk函数寻找old页表中是否已经存在虚拟地址为i的页表项，等于0则说明不存在，说明原页表中就没有该页，需要报错
-//     if((pte = walk(old, i, 0)) == 0)
-//       panic("uvmcopy: pte should exist");
-//     // 检查查找到的页表项是否有效
-//     if((*pte & PTE_V) == 0)
-//       panic("uvmcopy: page not present");
-//     // 将页表项转换成物理地址
-//     pa = PTE2PA(*pte);
-//     // 从页表项中获取页标志位
-//     flags = PTE_FLAGS(*pte);
-//     // 使用kalloc分配一个新页，给这个页表项，分配失败则前往err
-//     if((mem = kalloc()) == 0)
-//       goto err;
-//     // memmove将旧的页面内容赋值到新页当中
-//     memmove(mem, (char*)pa, PGSIZE);
-//     // 将新分配的内存映射到目标页表
-//     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-//       kfree(mem);
-//       goto err;
-//     }
-//   }
-//   return 0;
-
-//  err:
-//   // 如果失败则接触映射并释放已经分配的资源
-//   uvmunmap(new, 0, i / PGSIZE, 1);
-//   return -1;
-// }
-
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
-  pte_t *pte; // pte指针用于存储找到的页表项
-  uint64 pa, i; // pa用于存储物理页，i作为循环计数器，遍历虚拟地址空间
-  uint flags; // flags用来存储页表项中的标志位
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
 
-  // for循环，分配所需大小的页面
   for(i = 0; i < sz; i += PGSIZE){
-    // walk函数寻找old页表中是否已经存在虚拟地址为i的页表项，等于0则说明不存在，说明原页表中就没有该页，需要报错
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    // 检查查找到的页表项是否有效
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    // 将原页表项的可读权限清除
-    *pte &= ~PTE_W;
-    // 将页表项转换成物理地址
     pa = PTE2PA(*pte);
-    // 从页表项中获取页标志位
+
+    if(*pte&PTE_W)
+    {
+      *pte |= PTE_C;
+      *pte &= ~PTE_W;
+    }
+
     flags = PTE_FLAGS(*pte);
-    // 将旧的物理页映射到新的页表当中，而不是直接分配一个新的物理块，实现cow
-    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){ 
+      // 这里并没有把虚拟地址 i 映射到新分配的物理地址 mem
+      // 而是映射到了父进程的物理内存 pa 上
       printf("uvmcopy failed\n");
       goto err;
     }
+    refcnt_inc((void*)pa); 
   }
   return 0;
 
  err:
-  // 如果失败则接触映射并释放已经分配的资源
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
@@ -399,6 +362,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(uncopied_cow(pagetable, va0)){          // 注意这里是新加的
+      if(cowalloc(pagetable, va0) != 0) {
+        return -1;
+      }
+    }
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -483,8 +451,46 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 }
 
 // 给cow页分配物理页
-int
-cowcopy(pagetable_t old, pagetable_t new, uint64 sz) {
+int cowalloc(pagetable_t pgtbl, uint64 va){
+  pte_t* pte = walk(pgtbl, va, 0);
+  uint64 perm = PTE_FLAGS(*pte);
+
+  if(pte == 0) return -1;
+  uint64 prev_sta = PTE2PA(*pte); // 这里的 prev_sta 就是这个页帧原来使用的父进程的页表
+                                  // 这里写 sta 是因为这个地址是和页帧对齐的（page-aligned）
+                                  // 所以写个 sta 表示一个页帧的开始
+  uint64 newpage = (uint64)kalloc();     
+  if(!newpage){
+    return -1;
+  }
+  uint64 va_sta = PGROUNDDOWN(va); // 当前页帧
+
+  perm &= (~PTE_C); // 复制之后就不是合法的 COW 页了
+  perm |= PTE_W;    // 复制之后就可以写了
+
+  memmove((void*)newpage, (void*)prev_sta, PGSIZE); // 把父进程页帧的数据复制一遍
+  uvmunmap(pgtbl, va_sta, 1, 1);      // 然后取消对父进程页帧的映射
   
+  if(mappages(pgtbl, va_sta, PGSIZE, (uint64)newpage, perm) < 0){
+    kfree((void*)newpage);
+    return -1;
+  }
   return 0;
+}
+
+int uncopied_cow(pagetable_t pgtbl, uint64 va){
+  if(va >= MAXVA) 
+    return 0;
+  pte_t* pte = walk(pgtbl, va, 0);
+  if(pte == 0)             // 如果这个页不存在
+    return 0;
+  if((*pte & PTE_V) == 0)
+    return 0;
+  if((*pte & PTE_U) == 0)
+    return 0;
+  if(va >= MAXVA)
+    return 0;
+  if(pte == 0 || (*pte & (PTE_V)) == 0 || (*pte & PTE_U) == 0)
+      return 0;
+  return ((*pte) & PTE_C); // 有 PTE_C 的代表还没复制过，并且是 cow 页
 }
